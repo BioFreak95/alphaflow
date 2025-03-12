@@ -43,7 +43,16 @@ From: nvcr.io/nvidia/cuda:11.3.1-cudnn8-runtime-ubuntu18.04
         swig \
         clustalw \
         cython3 \
-        voronota && \
+        voronota \
+        fuse \
+	build-essential \
+	software-properties-common \
+	zlib1g-dev \
+	libzstd-dev \
+	liblzma-dev \
+	libarchive-dev \
+	liblzo2-dev \
+	gcc && \
         rm -rf /var/lib/apt/lists/* && \
         apt-get autoremove -y && \
         apt-get clean
@@ -52,7 +61,6 @@ From: nvcr.io/nvidia/cuda:11.3.1-cudnn8-runtime-ubuntu18.04
     export OPENSTRUCTURE_VERSION="2.7.0"
     export SRC_FOLDER="/usr/local/src"
     export CPUS_FOR_MAKE=2
-
     
     # Install TMscore
     wget https://zhanggroup.org/TM-score/TMscore.cpp
@@ -73,6 +81,14 @@ From: nvcr.io/nvidia/cuda:11.3.1-cudnn8-runtime-ubuntu18.04
     git checkout 1d878a1203e6d662a209a95f71b90083d5fc079c
 
     # Install conda environment
+    python --version
+    pip install pip==23.2.1
+    . /opt/conda/etc/profile.d/conda.sh
+    conda activate base
+    pip install -v pytorch_lightning==1.5.10
+    sed -i 's/torch (>=1\.7\.\*)/torch >=1.7.0/' /opt/conda/lib/python3.9/site-packages/pytorch_lightning-1.5.10.dist-info/METADATA
+    sed -i 's/torchtext (>=0\.8\.\*)/torchtext>=0.8.0/' /opt/conda/lib/python3.9/site-packages/pytorch_lightning-1.5.10.dist-info/METADATA
+    sed -i 's/torchvision (>=0\.8\.\*)/torchvision>=0.8.0/' /opt/conda/lib/python3.9/site-packages/pytorch_lightning-1.5.10.dist-info/METADATA
     conda env update -n base --file /opt/openfold/environment.yml && \
     conda clean --all --force-pkgs-dirs --yes
 
@@ -87,17 +103,24 @@ From: nvcr.io/nvidia/cuda:11.3.1-cudnn8-runtime-ubuntu18.04
     cd /opt/openfold && \
     pip3 install --upgrade pip --no-cache-dir && \
     python3 setup.py install
+    
+    # Install mmseqs2
+    conda install -c bioconda -c conda-forge mmseqs2 -y
 
     # Clone and install AlphaFlow
     git clone https://github.com/bjing2016/alphaflow.git /opt/alphaflow
 
     # Install AlphaFlow dependencies
-    python -m pip install numpy==1.21.2 pandas==1.5.3 && \
-    python -m pip install torch==1.13.1+cu117 -f https://download.pytorch.org/whl/torch_stable.html && \
-    python -m pip install biopython==1.79 dm-tree==0.1.6 modelcif==0.7 ml-collections==0.1.0 scipy==1.7.3 absl-py einops && \
-    python -m pip install pytorch_lightning==2.0.4 fair-esm mdtraj wandb
-
+    python -m pip install pandas==1.5.3 && \
+    python -m pip install torch==1.12.1+cu113 -f https://download.pytorch.org/whl/torch_stable.html && \
+    python -m pip install biopython==1.79 dm-tree==0.1.6 modelcif==0.7 ml-collections==0.1.0 scipy==1.7.1 absl-py einops && \
+    python -m pip install pytorch_lightning==2.0.4 fair-esm mdtraj==1.9.9 wandb && \
+    python -m pip install ratarmount[full] && \
+    python -m pip install omegaconf && \
+    python -m pip install numpy==1.21.2
+   
     # INSTALL OST
+    export LD_LIBRARY_PATH=/opt/conda/lib:$LD_LIBRARY_PATH
     cd ${SRC_FOLDER} && \
     wget -O openstructure-${OPENSTRUCTURE_VERSION}.tar.gz -nc https://git.scicore.unibas.ch/schwede/openstructure/-/archive/${OPENSTRUCTURE_VERSION}/openstructure-${OPENSTRUCTURE_VERSION}.tar.gz && \
     mkdir openstructure-${OPENSTRUCTURE_VERSION} && \
@@ -108,18 +131,29 @@ From: nvcr.io/nvidia/cuda:11.3.1-cudnn8-runtime-ubuntu18.04
              -DENABLE_MM=OFF \
              -DCOMPILE_TMTOOLS=1 \
              -DENABLE_GFX=ON \
+             -DCMAKE_PREFIX_PATH=/opt/conda \
              -DENABLE_GUI=OFF \
              -DENABLE_INFO=OFF \
              -DCMAKE_C_FLAGS="-isystem /usr/include/boost/ -isystem ${OPENMM_INCLUDE_PATH}/include" \
              -DCMAKE_CXX_FLAGS="-isystem /usr/include/boost/ -isystem ${OPENMM_INCLUDE_PATH}/include" && \
     make -j ${CPUS_FOR_MAKE} && \
-    wget ftp://ftp.wwpdb.org/pub/pdb/data/monomers/components.cif.gz && \
+    wget https://files.wwpdb.org/pub/pdb/data/monomers/components.cif.gz && \
     stage/bin/chemdict_tool create components.cif.gz compounds.chemlib pdb && stage/bin/chemdict_tool update ../modules/conop/data/charmm.cif compounds.chemlib charmm && \
     cmake .. -DCOMPOUND_LIB=${SRC_FOLDER}/openstructure-${OPENSTRUCTURE_VERSION}/build/compounds.chemlib && \
     make -j ${CPUS_FOR_MAKE} && make install && \
     rm ${SRC_FOLDER}/openstructure-${OPENSTRUCTURE_VERSION}.tar.gz && \
     rm -rf ${SRC_FOLDER}/openstructure-${OPENSTRUCTURE_VERSION}
-    
+
+# Download weights as part of the image, so the cached image contains them and we don't re-download each time
+# ESMFlow and ESM2
+     mkdir -p /opt/params/alphafold
+     mkdir -p /opt/params/esmfold
+     chmod -R 777 /opt/params
+     cd /opt/params/alphafold
+     wget https://storage.googleapis.com/alphafold/alphafold_params_2022-12-06.tar
+     tar -xvvvf alphafold_params_2022-12-06.tar
+     cd /opt/params/esmfold
+     wget https://dl.fbaipublicfiles.com/fair-esm/models/esmfold_3B_v1.pt
 
 %environment
     export PATH=/opt/conda/bin:$PATH
